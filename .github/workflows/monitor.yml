@@ -1,6 +1,7 @@
 name: Monitor de preço de ingresso
 
-# Cada execução fica ~5h40 verificando a página a cada ~2 min.
+# Cada execução fica ~5h40 verificando a página a cada ~1 min e publica os
+# dados para o painel ao vivo (docs/index.html, servido pelo GitHub Pages).
 # O agendamento a cada 30 min deixa a próxima execução na fila, que começa
 # assim que a anterior termina: na prática, monitoramento contínuo 24h.
 on:
@@ -11,6 +12,8 @@ on:
 jobs:
   monitor:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write   # publica o status.json do painel na branch live-data
     # só um monitor por vez; o próximo fica na fila e começa quando este termina
     concurrency:
       group: ticket-monitor
@@ -42,8 +45,10 @@ jobs:
           MAX_PRICE: ${{ vars.MAX_PRICE }}
           SECTOR_KEYWORD: ${{ vars.SECTOR_KEYWORD }}
           PRICE_SELECTOR: ${{ vars.PRICE_SELECTOR }}
-          INTERVAL_SECONDS: ${{ vars.INTERVAL_SECONDS || '120' }}
+          INTERVAL_SECONDS: ${{ vars.INTERVAL_SECONDS || '60' }}
           SUMMARY_HOUR: ${{ vars.SUMMARY_HOUR || '10' }}
+          PUBLISH_BRANCH: live-data
+          DASHBOARD_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/
           WHATSAPP_PROVIDER: ${{ vars.WHATSAPP_PROVIDER }}
           WHATSAPP_PHONE: ${{ secrets.WHATSAPP_PHONE }}
           CALLMEBOT_APIKEY: ${{ secrets.CALLMEBOT_APIKEY }}

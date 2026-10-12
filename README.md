@@ -1,4 +1,6 @@
-# Monitor de preço de ingresso → WhatsApp
+# Monitor de preço de ingresso → WhatsApp + painel ao vivo
+
+**📈 Painel ao vivo:** https://gustavodias-ui.github.io/Teste/
 
 Abre a página do ingresso de tempos em tempos, lê todos os preços em R$ e,
 quando algum entra na faixa que você definiu, manda uma mensagem no seu
@@ -56,10 +58,26 @@ Só falta configurar, em **Settings → Secrets and variables → Actions**:
    - `MAX_PRICE`: ex.: `900`
    - (opcional) `SECTOR_KEYWORD`: ex.: `Pista`
    - (opcional) `TICKET_URL`: só se quiser trocar o link (o padrão já é o do BTS)
-3. Aba **Actions** → *Monitor de preço de ingresso* → **Run workflow**.
+3. **Settings → Pages**: em *Build and deployment*, escolha *Source: Deploy from a branch*,
+   branch `ccr-3566d014-iwtg5b` e pasta `/docs`, e clique em **Save**. Isso publica o painel ao vivo.
+4. Aba **Actions** → *Monitor de preço de ingresso* → **Run workflow**.
    Isso manda uma mensagem de teste no WhatsApp e já liga o monitor.
 
-O que você recebe no WhatsApp:
+### Painel ao vivo
+
+Abra **https://gustavodias-ui.github.io/Teste/** no celular ou no computador
+(dá para salvar na tela inicial). O painel mostra:
+
+- se o monitor está **🟢 ao vivo**, com falha para ler o site ou parado, e há quanto tempo foi a última verificação
+- o menor preço agora e quantas ofertas estão na sua faixa
+- um botão **Comprar agora** que abre a página do evento
+- o gráfico do menor preço nas últimas 6h, 24h ou 7 dias
+- a lista de todas as ofertas lidas, com as da sua faixa marcadas
+
+O monitor verifica o site a cada ~1 min e o painel se atualiza sozinho.
+Os dados ficam na branch `live-data`, que o monitor sobrescreve a cada verificação.
+
+### O que você recebe no WhatsApp
 
 - 🎫 **Ingresso na faixa**: preço, setor e link para comprar, assim que aparecer
 - 📊 **Resumo diário** (às 10h): confirma que o monitor está ativo e mostra os menores preços do momento
@@ -83,7 +101,7 @@ Observações:
 | `MIN_PRICE` / `MAX_PRICE` | Faixa de preço em reais (ex.: `300` e `900`) |
 | `SECTOR_KEYWORD` | Só avisa ofertas cujo texto contenha a palavra (ex.: `Pista`, `Meia`) |
 | `PRICE_SELECTOR` | Seletor CSS do preço, se a detecção automática pegar valores errados, como taxas |
-| `INTERVAL_SECONDS` | Intervalo entre verificações (padrão `120`) |
+| `INTERVAL_SECONDS` | Intervalo entre verificações (padrão `60` no GitHub, `120` no computador) |
 | `SUMMARY_HOUR` | Hora do resumo diário, horário de Brasília (padrão `10`; `off` desliga) |
 | `FAIL_ALERT_AFTER` | Quantas falhas seguidas antes do aviso ⚠️ (padrão `5`) |
 

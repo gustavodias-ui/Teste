@@ -18,7 +18,8 @@ import random
 import re
 import sys
 import time
-from datetime import datetime
+import subprocess
+from datetime import datetime, timedelta
 from pathlib import Path
 from urllib.parse import quote_plus
 from zoneinfo import ZoneInfo
@@ -186,6 +187,9 @@ def load_state(path):
     data.setdefault("failures", 0)
     data.setdefault("health_alert_sent", False)
     data.setdefault("last_summary", "")
+    data.setdefault("last_offers", [])
+    data.setdefault("last_offers_at", "")
+    data.setdefault("history", [])
     return data
 
 
@@ -206,6 +210,75 @@ def format_offers(offers, limit=8):
     if len(offers) > limit:
         lines.append(f"... e mais {len(offers) - limit} oferta(s)")
     return lines
+
+
+# --------------------------------------------------------------------------
+# Painel ao vivo: status.json publicado a cada verificação
+# --------------------------------------------------------------------------
+
+HISTORY_STEP_SECONDS = 300   # um ponto no gráfico a cada 5 min (ou quando o preço muda)
+HISTORY_DAYS = 7
+
+
+def record_reading(state, offers, in_range, now):
+    state["last_offers"] = [
+        {"price": o["price"], "context": o["context"], "in_range": o in in_range} for o in offers
+    ]
+    state["last_offers_at"] = now.isoformat(timespec="seconds")
+
+    point = [now.isoformat(timespec="seconds"), offers[0]["price"], len(in_range)]
+    history = state["history"]
+    if history:
+        elapsed = (now - datetime.fromisoformat(history[-1][0])).total_seconds()
+        if elapsed < HISTORY_STEP_SECONDS and history[-1][1:] == point[1:]:
+            return
+    history.append(point)
+    cutoff = now - timedelta(days=HISTORY_DAYS)
+    state["history"] = [p for p in history if datetime.fromisoformat(p[0]) >= cutoff]
+
+
+def publish_status(cfg, state, failure, now):
+    """Grava status.json e, se PUBLISH_BRANCH estiver definido, envia para essa
+    branch do GitHub (é de lá que o painel lê). Nunca interrompe o monitor."""
+    status = {
+        "updated_at": now.isoformat(timespec="seconds"),
+        "interval_seconds": cfg["interval"],
+        "ok": failure is None,
+        "failure": failure,
+        "consecutive_failures": state["failures"],
+        "url": cfg["url"],
+        "min_price": cfg["min"],
+        "max_price": cfg["max"],
+        "keyword": cfg["keyword"],
+        "offers_at": state["last_offers_at"],
+        "offers": state["last_offers"],
+        "history": state["history"],
+    }
+    path = Path(cfg["status_file"])
+    path.write_text(json.dumps(status, ensure_ascii=False), encoding="utf-8")
+
+    branch = cfg["publish_branch"]
+    if not branch:
+        return
+    # commit "solto" (sem histórico) só com o status.json, sobrescrevendo a branch:
+    # não mexe nos arquivos do repositório e não acumula milhares de commits
+    git_env = {**os.environ,
+               "GIT_AUTHOR_NAME": "ticket-monitor", "GIT_AUTHOR_EMAIL": "ticket-monitor@users.noreply.github.com",
+               "GIT_COMMITTER_NAME": "ticket-monitor", "GIT_COMMITTER_EMAIL": "ticket-monitor@users.noreply.github.com"}
+
+    def git(*args, stdin=None):
+        return subprocess.run(["git", *args], input=stdin, env=git_env, capture_output=True,
+                              text=True, check=True, timeout=60).stdout.strip()
+
+    try:
+        blob = git("hash-object", "-w", str(path))
+        tree = git("mktree", stdin=f"100644 blob {blob}\tstatus.json\n")
+        commit = git("commit-tree", tree, "-m", f"status {status['updated_at']}")
+        git("push", "--force", "--quiet", "origin", f"{commit}:refs/heads/{branch}")
+    except (subprocess.SubprocessError, OSError) as e:
+        detail = getattr(e, "stderr", "") or str(e)
+        print(f"Aviso: não consegui publicar o status para o painel: {detail.strip()[:200]}",
+              file=sys.stderr)
 
 
 # --------------------------------------------------------------------------
@@ -246,10 +319,18 @@ def check_once(cfg, dry_run=False):
         return
 
     state = load_state(cfg["state_file"])
+    now = now_br()
+
+    # 0) Atualiza o painel antes de mandar mensagens (se o WhatsApp falhar, o painel segue vivo)
+    if failure:
+        state["failures"] += 1
+    else:
+        record_reading(state, offers, in_range, now)
+    publish_status(cfg, state, failure, now)
+    save_state(cfg["state_file"], state)
 
     # 1) Saúde do monitor: avisa uma vez se parar de conseguir ler a página
     if failure:
-        state["failures"] += 1
         if state["failures"] >= cfg["fail_alert_after"] and not state["health_alert_sent"]:
             send_whatsapp(
                 "⚠️ Monitor de ingressos: não estou conseguindo ler a página há "
@@ -272,13 +353,14 @@ def check_once(cfg, dry_run=False):
         lines = [f"🎫 Ingresso na faixa de {fmt_brl(cfg['min'])} a {fmt_brl(cfg['max'])}!", ""]
         lines += format_offers(new)
         lines += ["", f"👉 Comprar agora: {cfg['url']}"]
+        if cfg["dashboard_url"]:
+            lines.append(f"📈 Painel ao vivo: {cfg['dashboard_url']}")
         send_whatsapp("\n".join(lines))
         print(f"[{ts}] ✅ WhatsApp enviado com {len(new)} oferta(s) nova(s).")
     # guarda só o que ainda está na faixa: se uma oferta sumir e voltar, avisa de novo
     state["alerted"] = sorted({offer_key(o) for o in in_range})
 
     # 3) Resumo diário (confirma que o monitor está vivo e mostra os menores preços)
-    now = now_br()
     today = now.strftime("%Y-%m-%d")
     if cfg["summary_hour"] is not None and now.hour >= cfg["summary_hour"] \
             and state["last_summary"] != today:
@@ -292,6 +374,8 @@ def check_once(cfg, dry_run=False):
         ]
         lines += format_offers(offers, limit=5)
         lines += ["", f"Link: {cfg['url']}"]
+        if cfg["dashboard_url"]:
+            lines.append(f"📈 Painel ao vivo: {cfg['dashboard_url']}")
         send_whatsapp("\n".join(lines))
         state["last_summary"] = today
         print(f"[{ts}] 📊 Resumo diário enviado.")
@@ -325,10 +409,14 @@ def main():
         "selector": env("PRICE_SELECTOR"),
         "state_file": env("STATE_FILE", "state.json"),
         "fail_alert_after": int(env("FAIL_ALERT_AFTER", "5")),
+        "status_file": env("STATUS_FILE", "status.json"),
+        "publish_branch": env("PUBLISH_BRANCH"),
+        "dashboard_url": env("DASHBOARD_URL"),
+        "interval": int(env("INTERVAL_SECONDS", "120")),
         "summary_hour": None if summary_hour.lower() in ("off", "-1", "nao", "não") else int(summary_hour),
         "dump": args.dump,
     }
-    interval = int(env("INTERVAL_SECONDS", "120"))
+    interval = cfg["interval"]
 
     if args.once or args.dry_run:
         check_once(cfg, dry_run=args.dry_run)
