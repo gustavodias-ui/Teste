@@ -21,6 +21,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import quote_plus
+from zoneinfo import ZoneInfo
 
 import requests
 from playwright.sync_api import sync_playwright
@@ -176,63 +177,126 @@ def send_whatsapp(message):
 
 def load_state(path):
     try:
-        return set(json.loads(Path(path).read_text(encoding="utf-8")))
+        data = json.loads(Path(path).read_text(encoding="utf-8"))
     except (FileNotFoundError, ValueError):
-        return set()
+        data = {}
+    if isinstance(data, list):  # formato antigo: só a lista de ofertas avisadas
+        data = {"alerted": data}
+    data.setdefault("alerted", [])
+    data.setdefault("failures", 0)
+    data.setdefault("health_alert_sent", False)
+    data.setdefault("last_summary", "")
+    return data
 
 
-def save_state(path, keys):
-    Path(path).write_text(json.dumps(sorted(keys), ensure_ascii=False, indent=2), encoding="utf-8")
+def save_state(path, state):
+    Path(path).write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def now_br():
+    return datetime.now(ZoneInfo("America/Sao_Paulo"))
+
+
+def offer_key(o):
+    return f"{o['price']:.2f}|{o['context']}"
+
+
+def format_offers(offers, limit=8):
+    lines = [f"• {fmt_brl(o['price'])} — {o['context']}" for o in offers[:limit]]
+    if len(offers) > limit:
+        lines.append(f"... e mais {len(offers) - limit} oferta(s)")
+    return lines
 
 
 # --------------------------------------------------------------------------
-# Loop principal
+# Verificação
 # --------------------------------------------------------------------------
 
-def check_once(cfg, dry_run=False):
-    now = datetime.now().strftime("%d/%m %H:%M:%S")
-    text = fetch_page_text(cfg["url"], cfg["selector"])
+def read_offers(cfg):
+    """Devolve (ofertas, motivo_da_falha). Falha = erro ou nenhum preço achado."""
+    try:
+        text = fetch_page_text(cfg["url"], cfg["selector"])
+    except Exception as e:  # rede instável, página fora do ar, timeout...
+        return [], f"erro ao abrir a página: {str(e).splitlines()[0][:150]}"
     # com seletor, cada linha já é um bloco completo (setor + preço)
     offers = extract_offers(text, cfg["keyword"], context_before=0 if cfg["selector"] else 2)
-
     if not offers:
-        print(f"[{now}] Nenhum preço em R$ encontrado na página. "
-              "Rode com --dry-run --dump para ver o texto capturado.")
         if cfg["dump"]:
             print(text[:5000])
-        return
+        return [], "nenhum preço em R$ encontrado (bloqueio, captcha ou mudança no site?)"
+    offers.sort(key=lambda o: o["price"])
+    return offers, None
 
-    prices = sorted({o["price"] for o in offers})
-    print(f"[{now}] {len(offers)} preço(s) encontrados. Menor: {fmt_brl(prices[0])} | "
-          f"todos: {', '.join(fmt_brl(p) for p in prices[:15])}")
 
+def check_once(cfg, dry_run=False):
+    ts = now_br().strftime("%d/%m %H:%M:%S")
+    offers, failure = read_offers(cfg)
     in_range = [o for o in offers if cfg["min"] <= o["price"] <= cfg["max"]]
+
+    if offers:
+        print(f"[{ts}] {len(offers)} preço(s). Menor: {fmt_brl(offers[0]['price'])} | "
+              f"{len(in_range)} na faixa {fmt_brl(cfg['min'])}–{fmt_brl(cfg['max'])}")
+    else:
+        print(f"[{ts}] Falha: {failure}")
+
     if dry_run:
         for o in offers:
             flag = "✅" if o in in_range else "  "
             print(f"  {flag} {fmt_brl(o['price']):>14}  {o['context']}")
         return
 
-    current_keys = {f"{o['price']:.2f}|{o['context']}" for o in in_range}
-    already_sent = load_state(cfg["state_file"])
-    new = [o for o in in_range if f"{o['price']:.2f}|{o['context']}" not in already_sent]
+    state = load_state(cfg["state_file"])
 
+    # 1) Saúde do monitor: avisa uma vez se parar de conseguir ler a página
+    if failure:
+        state["failures"] += 1
+        if state["failures"] >= cfg["fail_alert_after"] and not state["health_alert_sent"]:
+            send_whatsapp(
+                "⚠️ Monitor de ingressos: não estou conseguindo ler a página há "
+                f"{state['failures']} tentativas seguidas ({failure}). Continuo tentando "
+                f"e aviso quando voltar.\n\nConfira manualmente: {cfg['url']}"
+            )
+            state["health_alert_sent"] = True
+        save_state(cfg["state_file"], state)
+        return
+
+    if state["health_alert_sent"]:
+        send_whatsapp("✅ Monitor de ingressos: voltei a ler a página normalmente.")
+    state["failures"] = 0
+    state["health_alert_sent"] = False
+
+    # 2) Ofertas novas dentro da faixa
+    already_sent = set(state["alerted"])
+    new = [o for o in in_range if offer_key(o) not in already_sent]
     if new:
-        new.sort(key=lambda o: o["price"])
         lines = [f"🎫 Ingresso na faixa de {fmt_brl(cfg['min'])} a {fmt_brl(cfg['max'])}!", ""]
-        for o in new[:8]:
-            lines.append(f"• {fmt_brl(o['price'])} — {o['context']}")
-        if len(new) > 8:
-            lines.append(f"... e mais {len(new) - 8} oferta(s)")
-        lines += ["", f"Comprar: {cfg['url']}"]
-        message = "\n".join(lines)
-        send_whatsapp(message)
-        print(f"[{now}] ✅ WhatsApp enviado com {len(new)} oferta(s) nova(s).")
-    else:
-        print(f"[{now}] Nada novo na faixa {fmt_brl(cfg['min'])}–{fmt_brl(cfg['max'])}.")
-
+        lines += format_offers(new)
+        lines += ["", f"👉 Comprar agora: {cfg['url']}"]
+        send_whatsapp("\n".join(lines))
+        print(f"[{ts}] ✅ WhatsApp enviado com {len(new)} oferta(s) nova(s).")
     # guarda só o que ainda está na faixa: se uma oferta sumir e voltar, avisa de novo
-    save_state(cfg["state_file"], current_keys)
+    state["alerted"] = sorted({offer_key(o) for o in in_range})
+
+    # 3) Resumo diário (confirma que o monitor está vivo e mostra os menores preços)
+    now = now_br()
+    today = now.strftime("%Y-%m-%d")
+    if cfg["summary_hour"] is not None and now.hour >= cfg["summary_hour"] \
+            and state["last_summary"] != today:
+        lines = [
+            f"📊 Resumo diário ({now:%d/%m}) — monitor ativo 24h.",
+            f"Sua faixa: {fmt_brl(cfg['min'])} a {fmt_brl(cfg['max'])}"
+            + (f" | setor: {cfg['keyword']}" if cfg["keyword"] else ""),
+            f"Na faixa agora: {len(in_range)} oferta(s).",
+            "",
+            "Menores preços no momento:",
+        ]
+        lines += format_offers(offers, limit=5)
+        lines += ["", f"Link: {cfg['url']}"]
+        send_whatsapp("\n".join(lines))
+        state["last_summary"] = today
+        print(f"[{ts}] 📊 Resumo diário enviado.")
+
+    save_state(cfg["state_file"], state)
 
 
 def main():
@@ -241,6 +305,8 @@ def main():
     parser.add_argument("--dry-run", action="store_true", help="mostra preços sem enviar")
     parser.add_argument("--dump", action="store_true", help="imprime o texto capturado se não achar preços")
     parser.add_argument("--test-whatsapp", action="store_true", help="envia mensagem de teste")
+    parser.add_argument("--max-minutes", type=float, default=0,
+                        help="no modo loop, para depois de N minutos (usado no GitHub Actions)")
     args = parser.parse_args()
 
     load_dotenv()
@@ -250,6 +316,7 @@ def main():
         print("Mensagem de teste enviada.")
         return
 
+    summary_hour = env("SUMMARY_HOUR", "10")
     cfg = {
         "url": env("TICKET_URL", required=True),
         "min": float(env("MIN_PRICE", "0").replace(",", ".")),
@@ -257,6 +324,8 @@ def main():
         "keyword": env("SECTOR_KEYWORD"),
         "selector": env("PRICE_SELECTOR"),
         "state_file": env("STATE_FILE", "state.json"),
+        "fail_alert_after": int(env("FAIL_ALERT_AFTER", "5")),
+        "summary_hour": None if summary_hour.lower() in ("off", "-1", "nao", "não") else int(summary_hour),
         "dump": args.dump,
     }
     interval = int(env("INTERVAL_SECONDS", "120"))
@@ -265,12 +334,22 @@ def main():
         check_once(cfg, dry_run=args.dry_run)
         return
 
-    print(f"Monitorando a cada ~{interval}s. Ctrl+C para parar.")
-    while True:
+    # falha logo na partida se faltar configuração do WhatsApp (e não no meio do loop)
+    if env("WHATSAPP_PROVIDER", "callmebot").lower() == "twilio":
+        required = ("WHATSAPP_PHONE", "TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN")
+    else:
+        required = ("WHATSAPP_PHONE", "CALLMEBOT_APIKEY")
+    for name in required:
+        env(name, required=True)
+
+    deadline = time.monotonic() + args.max_minutes * 60 if args.max_minutes else None
+    print(f"Monitorando a cada ~{interval}s. Ctrl+C para parar.", flush=True)
+    while deadline is None or time.monotonic() < deadline:
         try:
             check_once(cfg)
-        except Exception as e:  # rede instável, página fora do ar etc.: tenta de novo
-            print(f"[{datetime.now():%d/%m %H:%M:%S}] Erro: {e}", file=sys.stderr)
+        except Exception as e:  # ex.: falha ao enviar o WhatsApp: tenta de novo na próxima
+            print(f"[{now_br():%d/%m %H:%M:%S}] Erro: {e}", file=sys.stderr)
+        sys.stdout.flush()
         # um pouco de aleatoriedade para não bater sempre no mesmo segundo
         time.sleep(interval + random.randint(0, max(1, interval // 5)))
 

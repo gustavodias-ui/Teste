@@ -1,18 +1,21 @@
 name: Monitor de preço de ingresso
 
+# Cada execução fica ~5h40 verificando a página a cada ~2 min.
+# O agendamento a cada 30 min deixa a próxima execução na fila, que começa
+# assim que a anterior termina: na prática, monitoramento contínuo 24h.
 on:
   schedule:
-    - cron: "*/10 * * * *"   # a cada 10 min (o GitHub pode atrasar alguns minutos)
+    - cron: "*/30 * * * *"
   workflow_dispatch: {}
 
-concurrency:
-  group: ticket-monitor
-  cancel-in-progress: false
-
 jobs:
-  check:
+  monitor:
     runs-on: ubuntu-latest
-    timeout-minutes: 8
+    # só um monitor por vez; o próximo fica na fila e começa quando este termina
+    concurrency:
+      group: ticket-monitor
+      cancel-in-progress: false
+    timeout-minutes: 355
     steps:
       - uses: actions/checkout@v4
 
@@ -31,14 +34,16 @@ jobs:
           key: ticket-state-${{ github.run_id }}
           restore-keys: ticket-state-
 
-      - name: Verificar preço
-        run: python monitor.py --once
+      - name: Monitorar
+        run: python monitor.py --max-minutes 340
         env:
-          TICKET_URL: ${{ vars.TICKET_URL }}
+          TICKET_URL: ${{ vars.TICKET_URL || 'https://buyticketbrasil.com/event/bts-2026worldtourarirang/session/7dbb3a2b-985d-4bf2-9d36-df893169e098?returnTo=%2Fsearch' }}
           MIN_PRICE: ${{ vars.MIN_PRICE }}
           MAX_PRICE: ${{ vars.MAX_PRICE }}
           SECTOR_KEYWORD: ${{ vars.SECTOR_KEYWORD }}
           PRICE_SELECTOR: ${{ vars.PRICE_SELECTOR }}
+          INTERVAL_SECONDS: ${{ vars.INTERVAL_SECONDS || '120' }}
+          SUMMARY_HOUR: ${{ vars.SUMMARY_HOUR || '10' }}
           WHATSAPP_PROVIDER: ${{ vars.WHATSAPP_PROVIDER }}
           WHATSAPP_PHONE: ${{ secrets.WHATSAPP_PHONE }}
           CALLMEBOT_APIKEY: ${{ secrets.CALLMEBOT_APIKEY }}
@@ -51,3 +56,23 @@ jobs:
         with:
           path: state.json
           key: ticket-state-${{ github.run_id }}
+
+  # Botão para testar o WhatsApp: Actions → este workflow → Run workflow
+  # (roda na hora, mesmo com o monitor já rodando)
+  test-whatsapp:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install requests playwright==1.55.0
+      - run: python monitor.py --test-whatsapp
+        env:
+          WHATSAPP_PROVIDER: ${{ vars.WHATSAPP_PROVIDER }}
+          WHATSAPP_PHONE: ${{ secrets.WHATSAPP_PHONE }}
+          CALLMEBOT_APIKEY: ${{ secrets.CALLMEBOT_APIKEY }}
+          TWILIO_ACCOUNT_SID: ${{ secrets.TWILIO_ACCOUNT_SID }}
+          TWILIO_AUTH_TOKEN: ${{ secrets.TWILIO_AUTH_TOKEN }}
+          TWILIO_WHATSAPP_FROM: ${{ vars.TWILIO_WHATSAPP_FROM }}
