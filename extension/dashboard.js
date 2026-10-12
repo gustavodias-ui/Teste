@@ -41,6 +41,9 @@
     const wa = $("wa-banner");
     wa.className = "banner warn" + (status.whatsapp_error ? " show" : "");
     wa.textContent = status.whatsapp_error ? `O envio para o WhatsApp falhou: ${status.whatsapp_error}` : "";
+    const nb = $("note-banner");
+    nb.className = "banner warn" + (status.note ? " show" : "");
+    nb.textContent = status.note || "";
     $("source").textContent = status.offers_at
       ? `Preços lidos direto da página do site (aba fixada no seu Chrome) ${ago(status.offers_at)}${status.page_title ? ` · “${status.page_title}”` : ""}`
       : "";
@@ -82,7 +85,8 @@
     $("n-hit").textContent = hits.length ? `a partir de ${brl(Math.min(...hits.map((o) => o.price)))}` : "nenhuma ainda";
     $("tile-hit").classList.toggle("hit", hits.length > 0);
     $("v-range").textContent = `${brlShort(status.min_price)} – ${brlShort(status.max_price)}`;
-    $("n-range").textContent = status.keyword ? `setor: ${status.keyword}` : "todos os setores";
+    $("n-range").textContent = [status.day_filter ? `dia ${status.day_filter}` : "qualquer data",
+                                status.keyword ? `setor: ${status.keyword}` : "todos os setores"].join(" · ");
 
     const cta = $("cta");
     cta.href = status.url;
@@ -149,7 +153,7 @@
     const lastT = new Date(status.offers_at || status.updated_at).getTime();
     const m = { l: 56, r: 12, t: 12, b: 26 };
     const xMin = Math.max(t0, Math.min(pts[0].t, now)), xMax = now;
-    const prices = pts.map((d) => d.p);
+    const prices = pts.map((d) => d.p).filter((p) => p != null);
     let yLo = Math.min(...prices, status.min_price), yHi = Math.max(...prices, status.max_price);
     const pad = (yHi - yLo) * 0.08 || yHi * 0.1 || 10;
     yLo = Math.max(0, yLo - pad); yHi += pad;
@@ -195,13 +199,15 @@
     let d = "";
     for (let i = 0; i < pts.length; i++) {
       const cur = pts[i];
+      if (cur.p == null) continue; // sem oferta nesse momento: buraco na linha
       const next = i + 1 < pts.length ? pts[i + 1].t : lastT;
       const xs = x(cur.t), xe = x(Math.min(next, now));
-      d += (i === 0 || cur.t - pts[i - 1].t > GAP ? `M${xs},${y(cur.p)}` : `L${xs},${y(cur.p)}`) + `H${xe}`;
+      const prev = pts[i - 1];
+      d += (!prev || prev.p == null || cur.t - prev.t > GAP ? `M${xs},${y(cur.p)}` : `L${xs},${y(cur.p)}`) + `H${xe}`;
     }
     el("path", { d, fill: "none", stroke: "var(--series-1)", "stroke-width": 2, "stroke-linejoin": "round", "stroke-linecap": "round" }, svg);
     const last = pts[pts.length - 1];
-    el("circle", { cx: x(Math.min(lastT, now)), cy: y(last.p), r: 4.5, fill: "var(--series-1)", stroke: "var(--surface-1)", "stroke-width": 2 }, svg);
+    if (last.p != null) el("circle", { cx: x(Math.min(lastT, now)), cy: y(last.p), r: 4.5, fill: "var(--series-1)", stroke: "var(--surface-1)", "stroke-width": 2 }, svg);
 
     const cross = el("line", { y1: m.t, y2: H - m.b, stroke: "var(--text-muted)", "stroke-width": 1, "stroke-dasharray": "3 3", visibility: "hidden" }, svg);
     const dot = el("circle", { r: 4.5, fill: "var(--series-1)", stroke: "var(--surface-1)", "stroke-width": 2, visibility: "hidden" }, svg);
@@ -229,11 +235,11 @@
     if (!cur) return hideTip();
     const cx = px;
     cross.setAttribute("x1", cx); cross.setAttribute("x2", cx); cross.setAttribute("visibility", "visible");
-    dot.setAttribute("cx", cx); dot.setAttribute("cy", y(cur.p)); dot.setAttribute("visibility", "visible");
+    dot.setAttribute("cx", cx); dot.setAttribute("cy", cur.p == null ? m.t : y(cur.p)); dot.setAttribute("visibility", cur.p == null ? "hidden" : "visible");
     const tip = $("tip");
     tip.replaceChildren();
     const t1 = document.createElement("div"); t1.className = "muted"; t1.textContent = fmtTime(new Date(t));
-    const t2 = document.createElement("div"); const b = document.createElement("b"); b.textContent = brl(cur.p); t2.append("Menor preço: ", b);
+    const t2 = document.createElement("div"); const b = document.createElement("b"); b.textContent = cur.p == null ? "sem oferta" : brl(cur.p); t2.append("Menor preço: ", b);
     const t3 = document.createElement("div"); t3.textContent = `${cur.n} oferta(s) na faixa`;
     tip.append(t1, t2, t3);
     tip.style.display = "block";
@@ -241,7 +247,7 @@
     const left = ev.clientX - wrap.left;
     const tw = tip.offsetWidth;
     tip.style.left = Math.min(Math.max(0, left + 12 + tw > wrap.width ? left - tw - 12 : left + 12), wrap.width - tw) + "px";
-    tip.style.top = Math.max(0, y(cur.p) * (rect.height / chartGeom.H) - 60) + "px";
+    tip.style.top = Math.max(0, (cur.p == null ? chartGeom.m.t : y(cur.p)) * (rect.height / chartGeom.H) - 60) + "px";
   }
   function hideTip() {
     $("tip").style.display = "none";

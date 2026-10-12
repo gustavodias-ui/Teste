@@ -30,7 +30,7 @@ Clicando no ícone da extensão você vê o painel ao vivo.
 1. Baixe o projeto: no GitHub, **Code → Download ZIP**, e descompacte.
 2. No Chrome, abra `chrome://extensions` e ligue o **Modo do desenvolvedor** (canto superior direito).
 3. Clique em **Carregar sem compactação** e escolha a pasta `extension`.
-4. A tela de **Configurações** abre sozinha. Preencha a faixa de preço, o setor (opcional),
+4. A tela de **Configurações** abre sozinha. Preencha a faixa de preço, o **dia do show** (ex.: `31`), o setor (opcional),
    seu número e a apikey do CallMeBot (veja abaixo como pegar). Marque **Monitor ativo** e clique em **Salvar e verificar agora**.
 5. Clique em **Testar WhatsApp** para conferir se a mensagem chega.
 6. Fixe o ícone da extensão na barra (ícone de quebra-cabeça → 📌). O número no ícone é quantas ofertas estão na sua faixa.
@@ -38,6 +38,11 @@ Clicando no ícone da extensão você vê o painel ao vivo.
 Para funcionar 24h, o Chrome precisa ficar aberto e o computador **sem hibernar**
 (no Windows: Configurações → Energia → Suspender: Nunca; no Mac: Ajustes → Bateria/Energia → evitar repouso automático).
 Não feche a aba fixada do evento. Se fechar, a extensão abre outra.
+
+**Dia do show:** a extensão identifica a data escrita na página acima de cada preço
+(ex.: "31/10", "31 de outubro", "31 OUT") e só considera os preços desse dia. Se a página
+não mostrar data nenhuma (por exemplo, quando o link já é de uma sessão específica), ela
+avisa no painel e marca o alerta com "confira se é do dia 31".
 
 Se o site pedir login ou captcha, resolva uma vez na aba fixada. A extensão usa a mesma sessão do seu navegador.
 

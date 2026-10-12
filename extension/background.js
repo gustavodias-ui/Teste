@@ -17,6 +17,7 @@ const DEFAULTS = {
   phone: "",
   apikey: "",
   intervalMin: 1,
+  day: "", // dia do show, ex.: "31" ou "31/10"; vazio = qualquer data
   summaryHour: 10, // -1 desliga
   failAlertAfter: 5,
   renderWaitSec: 6,
@@ -134,9 +135,21 @@ function waitForLoad(tabId, timeoutMs = 45_000) {
   });
 }
 
-// Roda DENTRO da página do site: lê o texto visível e acha os preços em R$.
+// Roda DENTRO da página do site: lê o texto visível, acha os preços em R$ e,
+// para cada preço, a data do show escrita acima dele (ex.: "31/10", "31 de outubro").
 function extractFromPage(keyword, selector) {
   const RE = /R\$\s*(\d{1,3}(?:\.\d{3})+(?:,\d{1,2})?|\d+(?:,\d{1,2})?)/g;
+  const MONTHS = { jan: 1, fev: 2, mar: 3, abr: 4, mai: 5, jun: 6, jul: 7, ago: 8, set: 9, out: 10, nov: 11, dez: 12 };
+  const findDate = (text) => {
+    let m = text.match(/(?<![\d,.])(\d{1,2})\s*\/\s*(\d{1,2})(?:\s*\/\s*\d{2,4})?(?![\d,.])/);
+    // "1/2" (meia-entrada) não é data: exige pelo menos 3 dígitos (5/11, 31/10, 01/02)
+    if (m && m[1].length + m[2].length >= 3 && +m[1] >= 1 && +m[1] <= 31 && +m[2] >= 1 && +m[2] <= 12) return { day: +m[1], month: +m[2] };
+    m = text.match(/(?<![\d,.])(\d{1,2})\s*(?:de\s+)?(janeiro|fevereiro|mar[çc]o|abril|maio|junho|julho|agosto|setembro|outubro|novembro|dezembro|jan|fev|mar|abr|mai|jun|jul|ago|set|out|nov|dez)\.?(?![a-zà-ú])/i);
+    if (m && +m[1] >= 1 && +m[1] <= 31) return { day: +m[1], month: MONTHS[m[2].slice(0, 3).toLowerCase().replace("ç", "c")] };
+    return null;
+  };
+  const label = (d) => `${String(d.day).padStart(2, "0")}/${String(d.month).padStart(2, "0")}`;
+
   let lines, before;
   if (selector) {
     lines = [...document.querySelectorAll(selector)]
@@ -148,16 +161,36 @@ function extractFromPage(keyword, selector) {
   }
   lines = lines.map((l) => l.trim()).filter(Boolean);
   const offers = [];
+  const datesSeen = new Map();
+  let current = null; // última data vista acima (títulos de seção costumam vir antes dos preços)
   lines.forEach((line, i) => {
+    const d = findDate(line.replace(RE, ""));
+    if (d) { current = d; datesSeen.set(label(d), d); }
     for (const m of line.matchAll(RE)) {
       const price = parseFloat(m[1].replace(/\./g, "").replace(",", "."));
       if (!isFinite(price)) continue;
       const context = lines.slice(Math.max(0, i - before), i + 1).join(" | ").slice(0, 200);
       if (keyword && !context.toLowerCase().includes(keyword.toLowerCase())) continue;
-      offers.push({ price, context });
+      offers.push({ price, context, date: current });
     }
   });
-  return { offers, title: document.title, textLength: lines.join("\n").length };
+  // página com uma única data (ex.: no topo ou no rodapé): vale para todos os preços
+  if (datesSeen.size === 1) {
+    const only = [...datesSeen.values()][0];
+    offers.forEach((o) => { o.date = o.date || only; });
+  }
+  for (const o of offers) {
+    o.dateLabel = o.date ? label(o.date) : null;
+    // mostra a data junto do setor, se ela ainda não estiver no texto da oferta
+    if (o.date && !findDate(o.context.replace(RE, ""))) o.context = `📅 ${o.dateLabel} | ${o.context}`;
+  }
+  return { offers, title: document.title, datesSeen: [...datesSeen.keys()] };
+}
+
+// "31" ou "31/10" -> { day, month }
+function parseDayFilter(text) {
+  const m = String(text || "").trim().match(/^(\d{1,2})(?:\s*\/\s*(\d{1,2}))?$/);
+  return m ? { day: +m[1], month: m[2] ? +m[2] : null } : null;
 }
 
 async function readOffers(cfg) {
@@ -171,14 +204,28 @@ async function readOffers(cfg) {
     const [{ result }] = await chrome.scripting.executeScript({
       target: { tabId }, func: extractFromPage, args: [cfg.keyword || "", cfg.selector || ""],
     });
+    const base = { title: result.title, datesSeen: result.datesSeen, note: null, dateUnknown: false };
     if (!result.offers.length) {
-      return { offers: [], title: result.title,
+      return { ...base, offers: [],
                failure: `nenhum preço em R$ encontrado na página "${result.title}" (captcha, login ou mudança no site?)` };
     }
-    result.offers.sort((a, b) => a.price - b.price);
-    return { offers: result.offers, title: result.title, failure: null };
+    let offers = result.offers;
+    const want = parseDayFilter(cfg.day);
+    if (want) {
+      const dayTxt = cfg.day.trim();
+      if (!result.datesSeen.length) {
+        base.dateUnknown = true;
+        base.note = `A página não mostra nenhuma data, então não dá para separar o dia ${dayTxt}: estou considerando todos os preços. Confira se o link é da sessão do dia ${dayTxt}.`;
+      } else {
+        offers = offers.filter((o) => o.date && o.date.day === want.day && (!want.month || o.date.month === want.month));
+        if (!offers.length) base.note = `Nenhum preço do dia ${dayTxt} na página agora. Datas encontradas: ${result.datesSeen.join(", ")}.`;
+      }
+    }
+    offers = offers.map((o) => ({ price: o.price, context: o.context, date: o.dateLabel }));
+    offers.sort((a, b) => a.price - b.price);
+    return { ...base, offers, failure: null };
   } catch (e) {
-    return { offers: [], title: "", failure: `erro ao abrir a página: ${String(e.message || e).slice(0, 150)}` };
+    return { offers: [], title: "", datesSeen: [], note: null, failure: `erro ao abrir a página: ${String(e.message || e).slice(0, 150)}` };
   }
 }
 
@@ -234,7 +281,7 @@ async function runCheck(manual = false) {
 }
 
 async function doCheck(cfg) {
-  const { offers, title, failure } = await readOffers(cfg);
+  const { offers, title, failure, note, datesSeen, dateUnknown } = await readOffers(cfg);
   const state = await getState();
   const now = new Date();
   const inRange = offers.filter((o) => o.price >= cfg.min && o.price <= cfg.max);
@@ -247,7 +294,7 @@ async function doCheck(cfg) {
     state.lastOffers = offers.map((o) => ({ ...o, in_range: inRangeKeys.has(offerKey(o)) }));
     state.lastOffersAt = now.toISOString();
     state.lastPageTitle = title;
-    const point = [now.toISOString(), offers[0].price, inRange.length];
+    const point = [now.toISOString(), offers.length ? offers[0].price : null, inRange.length];
     const last = state.history[state.history.length - 1];
     if (!last || now - new Date(last[0]) >= HISTORY_STEP_MS || last[1] !== point[1] || last[2] !== point[2]) {
       state.history.push(point);
@@ -267,6 +314,9 @@ async function doCheck(cfg) {
     min_price: cfg.min,
     max_price: cfg.max,
     keyword: cfg.keyword || null,
+    day_filter: cfg.day || null,
+    note: failure ? null : note,
+    dates_seen: datesSeen || [],
     offers_at: state.lastOffersAt,
     offers: state.lastOffers,
     history: state.history,
@@ -294,7 +344,9 @@ async function doCheck(cfg) {
     const already = new Set(state.alerted);
     const fresh = inRange.filter((o) => !already.has(offerKey(o)));
     if (fresh.length) {
-      const msg = [`🎫 Ingresso na faixa de ${brl(cfg.min)} a ${brl(cfg.max)}!`, "", ...formatOffers(fresh), "", `👉 Comprar agora: ${cfg.url}`].join("\n");
+      const dayTxt = cfg.day && !dateUnknown ? ` para o dia ${cfg.day}` : "";
+      const msg = [`🎫 Ingresso${dayTxt} na faixa de ${brl(cfg.min)} a ${brl(cfg.max)}!`,
+        ...(cfg.day && dateUnknown ? [`⚠️ A página não mostra a data: confira se é do dia ${cfg.day}.`] : []), "", ...formatOffers(fresh), "", `👉 Comprar agora: ${cfg.url}`].join("\n");
       notify(`🎫 ${fresh.length} oferta(s) na sua faixa! A partir de ${brl(fresh[0].price)}`, "Clique para abrir a página e comprar.");
       await sendWhatsapp(cfg, msg);
     }
@@ -306,9 +358,10 @@ async function doCheck(cfg) {
     if (cfg.summaryHour >= 0 && now.getHours() >= cfg.summaryHour && state.lastSummary !== today) {
       const msg = [
         `📊 Resumo diário (${today}): monitor ativo.`,
-        `Sua faixa: ${brl(cfg.min)} a ${brl(cfg.max)}${cfg.keyword ? ` | setor: ${cfg.keyword}` : ""}`,
+        `Sua faixa: ${brl(cfg.min)} a ${brl(cfg.max)}${cfg.day ? ` | dia ${cfg.day}` : ""}${cfg.keyword ? ` | setor: ${cfg.keyword}` : ""}`,
         `Na faixa agora: ${inRange.length} oferta(s).`,
-        "", "Menores preços no momento:", ...formatOffers(offers, 5), "", `Link: ${cfg.url}`,
+        "", ...(offers.length ? ["Menores preços no momento:", ...formatOffers(offers, 5)] : [note || "Nenhum preço no momento."]),
+        "", `Link: ${cfg.url}`,
       ].join("\n");
       await sendWhatsapp(cfg, msg);
       state.lastSummary = today;
