@@ -1,0 +1,53 @@
+name: Monitor de preço de ingresso
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"   # a cada 10 min (o GitHub pode atrasar alguns minutos)
+  workflow_dispatch: {}
+
+concurrency:
+  group: ticket-monitor
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+      - run: python -m playwright install --with-deps chromium
+
+      # guarda as ofertas já avisadas entre execuções, para não repetir mensagem
+      - uses: actions/cache/restore@v4
+        with:
+          path: state.json
+          key: ticket-state-${{ github.run_id }}
+          restore-keys: ticket-state-
+
+      - name: Verificar preço
+        run: python monitor.py --once
+        env:
+          TICKET_URL: ${{ vars.TICKET_URL }}
+          MIN_PRICE: ${{ vars.MIN_PRICE }}
+          MAX_PRICE: ${{ vars.MAX_PRICE }}
+          SECTOR_KEYWORD: ${{ vars.SECTOR_KEYWORD }}
+          PRICE_SELECTOR: ${{ vars.PRICE_SELECTOR }}
+          WHATSAPP_PROVIDER: ${{ vars.WHATSAPP_PROVIDER }}
+          WHATSAPP_PHONE: ${{ secrets.WHATSAPP_PHONE }}
+          CALLMEBOT_APIKEY: ${{ secrets.CALLMEBOT_APIKEY }}
+          TWILIO_ACCOUNT_SID: ${{ secrets.TWILIO_ACCOUNT_SID }}
+          TWILIO_AUTH_TOKEN: ${{ secrets.TWILIO_AUTH_TOKEN }}
+          TWILIO_WHATSAPP_FROM: ${{ vars.TWILIO_WHATSAPP_FROM }}
+
+      - uses: actions/cache/save@v4
+        if: always() && hashFiles('state.json') != ''
+        with:
+          path: state.json
+          key: ticket-state-${{ github.run_id }}
