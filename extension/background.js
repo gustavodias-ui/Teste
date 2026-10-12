@@ -126,13 +126,61 @@ async function getMonitorTab(cfg) {
   return tab.id;
 }
 
-function waitForLoad(tabId, timeoutMs = 45_000) {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => { cleanup(); reject(new Error("a página demorou demais para carregar")); }, timeoutMs);
-    const listener = (id, info) => { if (id === tabId && info.status === "complete") { cleanup(); resolve(); } };
-    const cleanup = () => { clearTimeout(timer); chrome.tabs.onUpdated.removeListener(listener); };
-    chrome.tabs.onUpdated.addListener(listener);
-  });
+// Abre/recarrega a aba e espera terminar de carregar. O "ouvinte" é ligado ANTES
+// da navegação, senão uma página rápida (ou em cache) termina antes e o aviso se perde.
+async function loadMonitorTab(cfg, timeoutMs = 45_000) {
+  let targetId = null;
+  let resolveLoaded;
+  const loaded = new Promise((r) => { resolveLoaded = r; });
+  const completed = new Set();
+  const listener = (id, info) => {
+    if (info.status !== "complete") return;
+    completed.add(id);
+    if (id === targetId) resolveLoaded();
+  };
+  chrome.tabs.onUpdated.addListener(listener);
+  let timer;
+  try {
+    targetId = await getMonitorTab(cfg);
+    if (completed.has(targetId)) resolveLoaded();
+    await Promise.race([
+      loaded,
+      new Promise((_, reject) => { timer = setTimeout(() => reject(new Error("a página demorou demais para carregar")), timeoutMs); }),
+    ]);
+    return targetId;
+  } finally {
+    clearTimeout(timer);
+    chrome.tabs.onUpdated.removeListener(listener);
+  }
+}
+
+// Roda DENTRO da página do site: abre a lista "Selecione o tipo de ingresso"
+// (os preços só aparecem com ela aberta). Devolve quantos cliques deu.
+function openTicketList() {
+  const countPrices = () => ((document.body && document.body.innerText) || "").split("R$").length - 1;
+  const seen = new Set();
+  const candidates = [];
+  const add = (el) => { if (el && !seen.has(el)) { seen.add(el); candidates.push(el); } };
+  document.querySelectorAll('input[placeholder*="ingresso" i], [role="combobox"], [aria-haspopup="listbox"]').forEach(add);
+  for (const el of document.querySelectorAll("button, div, span, label, p")) {
+    const t = (el.textContent || "").trim();
+    if (t.length < 60 && /selecione o (tipo de )?ingresso/i.test(t) && el.querySelectorAll("*").length < 8) add(el);
+  }
+  const before = countPrices();
+  let clicks = 0;
+  for (const el of candidates.slice(0, 4)) {
+    if (el.getAttribute("aria-expanded") === "true") return clicks; // já aberta
+    el.scrollIntoView({ block: "center" });
+    if (el.focus) el.focus();
+    for (const type of ["pointerdown", "mousedown", "pointerup", "mouseup", "click"]) {
+      const Ev = type.startsWith("pointer") && window.PointerEvent ? PointerEvent : MouseEvent;
+      el.dispatchEvent(new Ev(type, { bubbles: true, cancelable: true, view: window }));
+    }
+    clicks++;
+    // abriu (apareceram preços novos ou uma lista de opções): para, senão o próximo clique fecha
+    if (countPrices() > before || document.querySelector('[role="option"], [role="listbox"]')) break;
+  }
+  return clicks;
 }
 
 // Roda DENTRO da página do site: lê o texto visível, acha os preços em R$ e,
@@ -148,43 +196,61 @@ function extractFromPage(keyword, selector) {
     if (m && +m[1] >= 1 && +m[1] <= 31) return { day: +m[1], month: MONTHS[m[2].slice(0, 3).toLowerCase().replace("ç", "c")] };
     return null;
   };
+  // só linhas curtas contam como "data do show" (títulos); textos longos como
+  // "três shows nos dias 28, 30 e 31 de outubro" não
+  const headingDate = (line) => (line.length <= 60 ? findDate(line.replace(RE, "")) : null);
   const label = (d) => `${String(d.day).padStart(2, "0")}/${String(d.month).padStart(2, "0")}`;
+  const flat = (el) => (el.innerText || el.textContent || "").replace(/\s*\n\s*/g, " | ").trim();
 
-  let lines, before;
-  if (selector) {
-    lines = [...document.querySelectorAll(selector)]
-      .map((e) => ((e.parentElement || e).innerText || "").replace(/\s*\n\s*/g, " | "));
-    before = 0;
-  } else {
-    lines = (document.body ? document.body.innerText : "").split("\n");
-    before = 2;
-  }
-  lines = lines.map((l) => l.trim()).filter(Boolean);
-  const offers = [];
+  const bodyLines = ((document.body && document.body.innerText) || "").split("\n").map((l) => l.trim()).filter(Boolean);
   const datesSeen = new Map();
-  let current = null; // última data vista acima (títulos de seção costumam vir antes dos preços)
-  lines.forEach((line, i) => {
-    const d = findDate(line.replace(RE, ""));
-    if (d) { current = d; datesSeen.set(label(d), d); }
-    for (const m of line.matchAll(RE)) {
-      const price = parseFloat(m[1].replace(/\./g, "").replace(",", "."));
-      if (!isFinite(price)) continue;
-      const context = lines.slice(Math.max(0, i - before), i + 1).join(" | ").slice(0, 200);
-      if (keyword && !context.toLowerCase().includes(keyword.toLowerCase())) continue;
-      offers.push({ price, context, date: current });
-    }
-  });
-  // página com uma única data (ex.: no topo ou no rodapé): vale para todos os preços
-  if (datesSeen.size === 1) {
-    const only = [...datesSeen.values()][0];
-    offers.forEach((o) => { o.date = o.date || only; });
+  bodyLines.forEach((l) => { const d = headingDate(l); if (d) datesSeen.set(label(d), d); });
+
+  // 1) itens de lista de opções (tipo de ingresso + preço no mesmo item)
+  // 2) seletor CSS configurado
+  // 3) texto da página inteira, linha a linha
+  let blocks = null;
+  if (selector) {
+    blocks = [...document.querySelectorAll(selector)].map((e) => flat(e.parentElement || e));
+  } else {
+    const opts = [...document.querySelectorAll('[role="option"], select option')].filter((e) => /R\$/.test(e.textContent || ""));
+    if (opts.length) blocks = opts.map(flat);
   }
+
+  const offers = [];
+  const push = (price, context, date) => {
+    if (!(price > 0)) return; // "R$ 0" = indisponível/esgotado
+    if (keyword && !context.toLowerCase().includes(keyword.toLowerCase())) return;
+    offers.push({ price, context: context.slice(0, 200), date });
+  };
+  const parse = (m) => parseFloat(m[1].replace(/\./g, "").replace(",", "."));
+
+  if (blocks) {
+    // lista de opções: a data é a da sessão, se a página mostrar uma única data em título
+    const only = datesSeen.size === 1 ? [...datesSeen.values()][0] : null;
+    for (const b of blocks) for (const m of b.matchAll(RE)) push(parse(m), b, findDate(b.replace(RE, "")) || only);
+  } else {
+    let current = null; // última data vista acima (títulos de seção vêm antes dos preços)
+    let lastPriceLine = -1;
+    bodyLines.forEach((line, i) => {
+      const d = headingDate(line);
+      if (d) current = d;
+      const matches = [...line.matchAll(RE)];
+      if (!matches.length) return;
+      // contexto: até 2 linhas acima, sem invadir a oferta anterior e sem textos longos (descrições)
+      const context = bodyLines.slice(Math.max(0, i - 2, lastPriceLine + 1), i + 1)
+        .filter((l, k, arr) => k === arr.length - 1 || l.length <= 80).join(" | ");
+      for (const m of matches) push(parse(m), context, current);
+      lastPriceLine = i;
+    });
+  }
+
   for (const o of offers) {
     o.dateLabel = o.date ? label(o.date) : null;
     // mostra a data junto do setor, se ela ainda não estiver no texto da oferta
     if (o.date && !findDate(o.context.replace(RE, ""))) o.context = `📅 ${o.dateLabel} | ${o.context}`;
   }
-  return { offers, title: document.title, datesSeen: [...datesSeen.keys()] };
+  return { offers, title: document.title, datesSeen: [...datesSeen.keys()], usedOptions: !!blocks && !selector };
 }
 
 // "31" ou "31/10" -> { day, month }
@@ -195,11 +261,13 @@ function parseDayFilter(text) {
 
 async function readOffers(cfg) {
   try {
-    const tabId = await getMonitorTab(cfg);
-    await waitForLoad(tabId);
+    const tabId = await loadMonitorTab(cfg);
     // dá tempo para o site montar a lista (páginas em JavaScript) e rola para carregar o resto
     await sleep(cfg.renderWaitSec * 1000);
     await chrome.scripting.executeScript({ target: { tabId }, func: () => window.scrollTo(0, document.body.scrollHeight) });
+    await sleep(1000);
+    // os preços ficam dentro da lista "Selecione o tipo de ingresso": abre antes de ler
+    await chrome.scripting.executeScript({ target: { tabId }, func: openTicketList });
     await sleep(1500);
     const [{ result }] = await chrome.scripting.executeScript({
       target: { tabId }, func: extractFromPage, args: [cfg.keyword || "", cfg.selector || ""],
@@ -207,7 +275,7 @@ async function readOffers(cfg) {
     const base = { title: result.title, datesSeen: result.datesSeen, note: null, dateUnknown: false };
     if (!result.offers.length) {
       return { ...base, offers: [],
-               failure: `nenhum preço em R$ encontrado na página "${result.title}" (captcha, login ou mudança no site?)` };
+               failure: `nenhum preço em R$ encontrado na página "${result.title}" (captcha, login, ingressos esgotados ou mudança no site?)` };
     }
     let offers = result.offers;
     const want = parseDayFilter(cfg.day);
@@ -217,8 +285,14 @@ async function readOffers(cfg) {
         base.dateUnknown = true;
         base.note = `A página não mostra nenhuma data, então não dá para separar o dia ${dayTxt}: estou considerando todos os preços. Confira se o link é da sessão do dia ${dayTxt}.`;
       } else {
-        offers = offers.filter((o) => o.date && o.date.day === want.day && (!want.month || o.date.month === want.month));
-        if (!offers.length) base.note = `Nenhum preço do dia ${dayTxt} na página agora. Datas encontradas: ${result.datesSeen.join(", ")}.`;
+        // preço com data diferente sai; preço sem data identificada fica, marcado como "confira"
+        offers = offers.filter((o) => !o.date || (o.date.day === want.day && (!want.month || o.date.month === want.month)));
+        if (!offers.length) {
+          base.note = `Nenhum preço do dia ${dayTxt} na página agora. Datas encontradas: ${result.datesSeen.join(", ")}.`;
+        } else if (offers.some((o) => !o.date)) {
+          base.dateUnknown = true;
+          base.note = `Não achei a data do show perto de alguns preços. Confira se o link é da sessão do dia ${dayTxt}. Datas na página: ${result.datesSeen.join(", ")}.`;
+        }
       }
     }
     offers = offers.map((o) => ({ price: o.price, context: o.context, date: o.dateLabel }));
