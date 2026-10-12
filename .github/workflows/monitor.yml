@@ -11,6 +11,8 @@ on:
 
 jobs:
   monitor:
+    # só roda depois que a faixa de preço for configurada em Settings → Variables
+    if: ${{ vars.MAX_PRICE != '' }}
     runs-on: ubuntu-latest
     permissions:
       contents: write   # publica o status.json do painel na branch live-data

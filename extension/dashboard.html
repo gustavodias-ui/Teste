@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Monitor de ingressos</title>
+<link rel="stylesheet" href="dashboard.css">
+</head>
+<body>
+<main>
+  <header>
+    <div>
+      <h1>🎫 Monitor de ingressos</h1>
+      <div class="sub" id="sub">Carregando…</div>
+    </div>
+    <span class="pill" id="pill"><span class="dot"></span><span id="pill-text">Conectando…</span></span>
+  </header>
+
+  <div class="banner" id="banner" role="status"></div>
+  <div class="banner warn" id="wa-banner" role="status"></div>
+
+  <div class="tiles">
+    <div class="card tile" id="tile-min">
+      <div class="label">Menor preço agora</div>
+      <div class="value" id="v-min">—</div>
+      <div class="note" id="n-min"></div>
+    </div>
+    <div class="card tile" id="tile-hit">
+      <div class="label">Na sua faixa</div>
+      <div class="value" id="v-hit">—</div>
+      <div class="note" id="n-hit"></div>
+    </div>
+    <div class="card tile">
+      <div class="label">Sua faixa</div>
+      <div class="value" id="v-range" style="font-size:18px">—</div>
+      <div class="note" id="n-range"></div>
+    </div>
+  </div>
+
+  <a class="cta" id="cta" href="#" target="_blank" rel="noopener noreferrer">Abrir página do evento ↗</a>
+  <div class="source" id="source"></div>
+
+  <div class="stack">
+    <section class="card">
+      <div class="section-head">
+        <h2>Menor preço ao longo do tempo</h2>
+        <div class="seg" role="group" aria-label="Período">
+          <button data-h="6" aria-pressed="false">6h</button>
+          <button data-h="24" aria-pressed="true">24h</button>
+          <button data-h="168" aria-pressed="false">7 dias</button>
+        </div>
+      </div>
+      <div class="chart-wrap" id="chart-wrap">
+        <svg id="chart" role="img" aria-label="Gráfico do menor preço ao longo do tempo"></svg>
+        <div class="tip" id="tip"></div>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="section-head">
+        <h2 id="offers-title">Ofertas na página</h2>
+        <label class="toggle"><input type="checkbox" id="only-hit"> Só na minha faixa</label>
+      </div>
+      <table>
+        <thead><tr><th>Preço</th><th>Detalhes</th></tr></thead>
+        <tbody id="offers"></tbody>
+      </table>
+    </section>
+  </div>
+
+  <footer>
+    <span id="foot"></span>
+    <span class="actions">
+      <button class="btn" id="refresh">Verificar agora</button>
+      <button class="btn" id="fullscreen">Tela cheia</button>
+      <button class="btn" id="settings">⚙ Configurações</button>
+    </span>
+  </footer>
+</main>
+
+<script src="dashboard.js"></script>
+</body>
+</html>

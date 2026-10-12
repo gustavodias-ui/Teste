@@ -18,6 +18,31 @@ Comprar: https://buyticketbrasil.com/event/bts-2026worldtourarirang/session/...
 
 Cada oferta é avisada uma vez só. Se ela sumir e voltar depois, você recebe o aviso de novo.
 
+## ⭐ Opção recomendada: extensão do Chrome (lê direto do site, no seu navegador)
+
+A pasta [`extension/`](extension) é uma extensão do Chrome. Ela abre a página do evento
+numa **aba fixada**, recarrega a cada minuto e lê os preços **exatamente como aparecem na tela**.
+Quando aparece oferta na sua faixa, ela manda WhatsApp e mostra uma notificação no computador.
+Clicando no ícone da extensão você vê o painel ao vivo.
+
+**Instalar (2 minutos):**
+
+1. Baixe o projeto: no GitHub, **Code → Download ZIP**, e descompacte.
+2. No Chrome, abra `chrome://extensions` e ligue o **Modo do desenvolvedor** (canto superior direito).
+3. Clique em **Carregar sem compactação** e escolha a pasta `extension`.
+4. A tela de **Configurações** abre sozinha. Preencha a faixa de preço, o setor (opcional),
+   seu número e a apikey do CallMeBot (veja abaixo como pegar). Marque **Monitor ativo** e clique em **Salvar e verificar agora**.
+5. Clique em **Testar WhatsApp** para conferir se a mensagem chega.
+6. Fixe o ícone da extensão na barra (ícone de quebra-cabeça → 📌). O número no ícone é quantas ofertas estão na sua faixa.
+
+Para funcionar 24h, o Chrome precisa ficar aberto e o computador **sem hibernar**
+(no Windows: Configurações → Energia → Suspender: Nunca; no Mac: Ajustes → Bateria/Energia → evitar repouso automático).
+Não feche a aba fixada do evento. Se fechar, a extensão abre outra.
+
+Se o site pedir login ou captcha, resolva uma vez na aba fixada. A extensão usa a mesma sessão do seu navegador.
+
+> Use **ou** a extensão **ou** o monitor do GitHub (abaixo), não os dois, senão você recebe as mensagens em dobro.
+
 ## 1. Configurar o WhatsApp (CallMeBot, grátis)
 
 1. Salve o contato **+34 694 29 84 96** no celular (confira o número atual em <https://www.callmebot.com/blog/free-api-whatsapp-messages/>).

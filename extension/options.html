@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Configurações · Monitor de ingressos</title>
+<link rel="stylesheet" href="dashboard.css">
+<style>
+  main { max-width: 640px; }
+  form .card + .card { margin-top: 12px; }
+  .field { display: block; margin-bottom: 14px; }
+  .field:last-child { margin-bottom: 0; }
+  .field > span { display: block; font-size: 13px; font-weight: 600; margin-bottom: 4px; }
+  .field small { display: block; color: var(--text-muted); font-size: 12px; margin-top: 4px; }
+  input[type=text], input[type=number], input[type=url], input[type=tel], input[type=password] {
+    width: 100%; padding: 9px 10px; border-radius: 8px; border: 1px solid var(--border);
+    background: var(--surface-2); color: var(--text-primary); font: inherit;
+  }
+  .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .switch { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 15px; cursor: pointer; }
+  .switch input { width: 20px; height: 20px; }
+  .bar { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 16px; }
+  .btn.primary { background: var(--cta); color: var(--cta-text); border-color: var(--cta); font-weight: 700; }
+  #msg { margin-top: 12px; font-size: 14px; min-height: 1.4em; }
+  #msg.err { color: var(--critical); }
+  #msg.ok { color: var(--good-text); }
+  ol { padding-left: 20px; margin: 6px 0 0; color: var(--text-secondary); font-size: 13px; }
+</style>
+</head>
+<body>
+<main>
+  <header><div><h1>⚙ Configurações</h1><div class="sub">Monitor de ingressos</div></div></header>
+  <form id="form" autocomplete="off">
+    <section class="card">
+      <label class="switch"><input type="checkbox" id="enabled"> Monitor ativo</label>
+      <small style="display:block;color:var(--text-muted);font-size:12px;margin-top:4px">
+        Ele abre uma aba fixada com a página do evento e a recarrega a cada intervalo.
+        Deixe o Chrome aberto e o computador sem hibernar.
+      </small>
+    </section>
+
+    <section class="card">
+      <h2 style="margin-bottom:12px">O que monitorar</h2>
+      <label class="field"><span>Link da página do evento</span>
+        <input type="url" id="url" required></label>
+      <div class="row">
+        <label class="field"><span>Preço mínimo (R$)</span><input type="number" id="min" min="0" step="0.01"></label>
+        <label class="field"><span>Preço máximo (R$)</span><input type="number" id="max" min="0" step="0.01" required></label>
+      </div>
+      <label class="field"><span>Setor (opcional)</span>
+        <input type="text" id="keyword" placeholder="ex.: Pista, Cadeira, Meia">
+        <small>Só considera ofertas cujo texto contenha essa palavra.</small></label>
+      <div class="row">
+        <label class="field"><span>Verificar a cada (min)</span><input type="number" id="intervalMin" min="0.5" step="0.5"></label>
+        <label class="field"><span>Resumo diário às (h)</span><input type="number" id="summaryHour" min="-1" max="23">
+          <small>-1 desliga</small></label>
+      </div>
+      <details>
+        <summary style="cursor:pointer;font-size:13px;color:var(--text-secondary)">Avançado</summary>
+        <div style="margin-top:12px">
+          <label class="field"><span>Seletor CSS do preço</span>
+            <input type="text" id="selector" placeholder="ex.: .ticket-price">
+            <small>Use se a leitura automática pegar valores errados (como taxas).</small></label>
+          <div class="row">
+            <label class="field"><span>Espera para a página montar (s)</span><input type="number" id="renderWaitSec" min="1" max="60"></label>
+            <label class="field"><span>Avisar falha após N tentativas</span><input type="number" id="failAlertAfter" min="1"></label>
+          </div>
+        </div>
+      </details>
+    </section>
+
+    <section class="card">
+      <h2 style="margin-bottom:8px">WhatsApp (CallMeBot, grátis)</h2>
+      <ol>
+        <li>Salve no celular o contato do CallMeBot. O número atual está em
+          <a href="https://www.callmebot.com/blog/free-api-whatsapp-messages/" target="_blank" rel="noopener">callmebot.com</a>.</li>
+        <li>Mande para ele: <code>I allow callmebot to send me messages</code></li>
+        <li>Cole aqui a <b>apikey</b> que ele responder.</li>
+      </ol>
+      <div class="row" style="margin-top:12px">
+        <label class="field"><span>Seu número</span><input type="tel" id="phone" placeholder="+5511999998888"></label>
+        <label class="field"><span>apikey</span><input type="password" id="apikey"></label>
+      </div>
+    </section>
+
+    <div class="bar">
+      <button class="btn primary" type="submit">Salvar</button>
+      <button class="btn" type="button" id="test">Testar WhatsApp</button>
+      <button class="btn" type="button" id="check">Salvar e verificar agora</button>
+      <button class="btn" type="button" id="dash">Abrir painel</button>
+    </div>
+    <div id="msg" role="status"></div>
+  </form>
+</main>
+<script src="options.js"></script>
+</body>
+</html>
