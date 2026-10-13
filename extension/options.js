@@ -40,9 +40,10 @@ async function save() {
   if (cfg.day && !/^\d{1,2}(\s*\/\s*\d{1,2})?$/.test(cfg.day)) throw new Error("Dia do show: use só o dia (31) ou dia/mês (31/10).");
   if (cfg.enabled && (!cfg.phone || !cfg.apikey)) throw new Error("Preencha seu número e a apikey do CallMeBot para ativar.");
   // outro site? pede permissão para ler aquela página (precisa ser no clique)
-  const origin = new URL(cfg.url).origin + "/*";
-  if (!(await chrome.permissions.contains({ origins: [origin] }))) {
-    const granted = await chrome.permissions.request({ origins: [origin] });
+  // (no Firefox/Zen as permissões de site podem não vir liberadas na instalação)
+  const origins = [new URL(cfg.url).origin + "/*", "https://api.callmebot.com/*"];
+  if (!(await chrome.permissions.contains({ origins }))) {
+    const granted = await chrome.permissions.request({ origins });
     if (!granted) throw new Error("Sem permissão para ler esse site, o monitor não funciona.");
   }
   const { config: old } = await chrome.storage.local.get("config");

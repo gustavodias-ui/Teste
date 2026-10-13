@@ -108,6 +108,12 @@ function samePage(a, b) {
   } catch { return false; }
 }
 
+// pede ao navegador para não "descarregar" a aba para economizar memória
+// (nem todo navegador aceita essa opção; se não aceitar, seguimos sem ela)
+async function keepLoaded(tabId) {
+  try { await chrome.tabs.update(tabId, { autoDiscardable: false }); } catch { /* Firefox/Zen antigos */ }
+}
+
 async function getMonitorTab(cfg) {
   const { monitorTabId } = await chrome.storage.local.get("monitorTabId");
   if (monitorTabId != null) {
@@ -115,13 +121,14 @@ async function getMonitorTab(cfg) {
       const tab = await chrome.tabs.get(monitorTabId);
       // se você usou essa aba para comprar (mudou de página), não mexemos nela
       if (tab && samePage(tab.url || tab.pendingUrl || "", cfg.url)) {
-        await chrome.tabs.update(tab.id, { url: cfg.url, autoDiscardable: false });
+        await chrome.tabs.update(tab.id, { url: cfg.url });
+        await keepLoaded(tab.id);
         return tab.id;
       }
     } catch { /* aba fechada */ }
   }
   const tab = await chrome.tabs.create({ url: cfg.url, active: false, pinned: true });
-  await chrome.tabs.update(tab.id, { autoDiscardable: false });
+  await keepLoaded(tab.id);
   await chrome.storage.local.set({ monitorTabId: tab.id });
   return tab.id;
 }
@@ -316,7 +323,7 @@ async function sendWhatsapp(cfg, text) {
 }
 
 function notify(title, message) {
-  chrome.notifications.create({ type: "basic", iconUrl: "icons/128.png", title, message, priority: 2 });
+  chrome.notifications.create({ type: "basic", iconUrl: "icons/128.png", title, message });
 }
 
 async function updateBadge() {

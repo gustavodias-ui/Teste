@@ -35,7 +35,17 @@ Clicando no ícone da extensão você vê o painel ao vivo.
 5. Clique em **Testar WhatsApp** para conferir se a mensagem chega.
 6. Fixe o ícone da extensão na barra (ícone de quebra-cabeça → 📌). O número no ícone é quantas ofertas estão na sua faixa.
 
-Para funcionar 24h, o Chrome precisa ficar aberto e o computador **sem hibernar**
+**No Zen ou no Firefox:** a mesma pasta funciona.
+
+1. Abra `about:debugging#/runtime/this-firefox`.
+2. Clique em **Carregar extensão temporária…** (*Load Temporary Add-on…*) e escolha o arquivo `manifest.json` dentro da pasta `extension`.
+3. Siga a partir do passo 4 acima. Se o navegador pedir permissão para acessar o site ou o CallMeBot, aceite.
+
+No Zen/Firefox, extensões não assinadas pela Mozilla são carregadas como "temporárias":
+ficam ativas enquanto o navegador estiver aberto e somem quando ele é fechado. Aí é só
+carregar de novo (e conferir as configurações).
+
+Para funcionar 24h, o navegador precisa ficar aberto e o computador **sem hibernar**
 (no Windows: Configurações → Energia → Suspender: Nunca; no Mac: Ajustes → Bateria/Energia → evitar repouso automático).
 Não feche a aba fixada do evento. Se fechar, a extensão abre outra.
 
